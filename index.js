@@ -4,20 +4,20 @@ global.crypto = crypto;
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
+const qrcode = require('qrcode-terminal');
 const axios = require('axios');
-const readline = require('readline');
 const fs = require('fs');
 
+// Sapu bersih sesi lama yang corrupt agar sistem fresh
 if (fs.existsSync('./auth_info_baileys')) {
-    console.log('🧹 Membersihkan sisa sesi lama...');
+    console.log('🧹 Membersihkan sisa sesi lama yang nyangkut di server...');
     fs.rmSync('./auth_info_baileys', { recursive: true, force: true });
 }
 
+// KONFIGURASI UTAMA ALTRA SHOES & INTEGRASI MEMORI
 const GEMINI_API_KEY = "AQ.Ab8RN6I3w18SXHUYaqRjN6hJQAufTCBTvDJEerztb8sCpWK6Hg"; 
 const SPREADSHEET_ID = "1sRHDSiuHqXGXzqXgFRJrHcrCibDyTE9CpMSzzzzBL70"; 
 const NOMOR_BOS = "6285782575628@s.whatsapp.net"; 
-
-// NOMOR WHATSAPP BOS PUTRA UNTUK PAIRING CODE (Tanpa tanda +, langsung angka misal: 6285782575628)
 const NOMOR_HP_PAIRING = "6285782575628"; 
 
 async function startBot() {
@@ -38,7 +38,7 @@ async function startBot() {
 
     sock.ev.on('creds.update', saveCreds);
 
-    // --- FITUR PAIRING CODE OTOMATIS ---
+    // MENGAKTIFKAN PAIRING CODE OTOMATIS (Mencegah error QR terminal yang panjang/terpotong)
     if (!sock.authState.creds.registered) {
         setTimeout(async () => {
             try {
@@ -54,8 +54,15 @@ async function startBot() {
     }
 
     sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect } = update;
+        const { connection, lastDisconnect, qr } = update;
         
+        // Backup cetak qrcode terminal jika sewaktu-waktu dibutuhkan
+        if (qr) {
+            console.log('\n\n--- 📱 QR CODE ALTERNATIF ---');
+            qrcode.generate(qr, { small: true });
+            console.log('------------------------------\n\n');
+        }
+
         if (connection === 'close') {
             const errorLog = lastDisconnect.error?.message || "Tidak diketahui";
             const statusCode = (lastDisconnect.error instanceof Boom)?.output?.statusCode;
@@ -69,13 +76,14 @@ async function startBot() {
                     startBot();
                 }, 5000);
             } else {
-                console.log('❌ Bot logged out.');
+                console.log('❌ Bot logged out. Silakan hapus folder sesi.');
             }
         } else if (connection === 'open') {
             console.log('🤖 MANTAP BOS! BOT ALTRA SHOES BERHASIL TERHUBUNG KE WHATSAPP!');
         }
     });
 
+    // MENANGKAP PESAN MASUK & INTEGRASI MEMORI PENUH
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
         const msg = messages[0];
@@ -96,25 +104,28 @@ async function startBot() {
         let cleanBos = NOMOR_BOS.replace('@s.whatsapp.net', '');
         if (cleanBos.startsWith('0')) cleanBos = '62' + cleanBos.substring(1);
 
+        // 1. JAPRI PRIBADI (MENTOR BISNIS & CEK STOK UNTUK PUTRA)
         if (!isGroup && cleanSender === cleanBos) {
             if (messageText.toUpperCase().includes("STOK") || messageText.toUpperCase().includes("CEK")) {
                 let infoStok = await cekStokDariGoogleSheet(messageText);
                 await sock.sendMessage(senderJid, { text: "📦 " + infoStok });
             } else {
-                let mentorPrompt = "Kamu adalah mentor bisnis AI tingkat atas untuk Putra. Putra adalah pemilik Altra Shoes (toko alas kaki kasir & retail di Tangerang), agen Lion Parcel, memegang logistik JNE Express untuk Erajaya Group, sangat mahir membuat otomatisasi Google Apps Script, dan mengelola keuangan kasir bersama Alika. Berikan analisis bisnis yang cerdas, taktis, sangat luwes, mendalam, dan berikan solusi nyata langkah demi langkah dengan gaya bahasa yang natural, hangat, dan profesional.";
+                let mentorPrompt = "Kamu adalah mentor bisnis AI tingkat atas untuk Putra. Kamu tahu persis seluruh latar belakang Putra: Putra adalah pemilik Altra Shoes (toko alas kaki ritel & kasir di Tangerang), agen Lion Parcel, memegang logistik JNE Express untuk Erajaya Group, sangat mahir membuat otomatisasi Google Apps Script & web apps, serta mengelola keuangan bersama pasangannya, Alika. Berikan analisis bisnis yang cerdas, taktis, sangat luwes, mendalam, dan berikan solusi nyata langkah demi langkah dengan gaya bahasa yang natural, hangat, dan profesional.";
                 let aiRespon = await panggilGeminiAQ(messageText, mentorPrompt);
                 await sock.sendMessage(senderJid, { text: aiRespon });
             }
         }
+        // 2. CHAT DI GRUP (ASISTEN OPERASIONAL)
         else if (isGroup && (messageText.toLowerCase().includes("bot") || messageText.includes("6285973984510"))) {
             let cleanMessage = messageText.replace(/@6285973984510/g, "").trim();
-            let asistenPrompt = "Kamu adalah asisten operasional Altra Shoes. Jawab dengan ringkas, ramah, dan solutif untuk urusan toko.";
+            let asistenPrompt = "Kamu adalah asisten operasional Altra Shoes di Tangerang milik Putra. Jawab dengan ringkas, ramah, dan solutif untuk urusan toko, kasir, maupun ekspedisi.";
             let aiRespon = await panggilGeminiAQ(cleanMessage, asistenPrompt);
             await sock.sendMessage(senderJid, { text: "🤖 " + aiRespon });
         }
     });
 }
 
+// FUNGSI MEMANGGIL GEMINI API NATIVE
 async function panggilGeminiAQ(userMessage, systemPrompt) {
     try {
         let url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -145,6 +156,7 @@ async function panggilGeminiAQ(userMessage, systemPrompt) {
     }
 }
 
+// FUNGSI MEMBACA GOOGLE SHEET INVENTARIS
 async function cekStokDariGoogleSheet(query) {
     try {
         let csvUrl = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/export?format=csv`;
