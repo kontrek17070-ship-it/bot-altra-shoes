@@ -4,21 +4,25 @@ global.crypto = crypto;
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
-const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode'); // Library untuk membuat QR code berbentuk file/buffer
 const axios = require('axios');
 const fs = require('fs');
 
-// Sapu bersih sesi lama yang corrupt agar sistem fresh
+// Sapu bersih sesi lama yang corrupt
 if (fs.existsSync('./auth_info_baileys')) {
-    console.log('🧹 Membersihkan sisa sesi lama yang nyangkut di server...');
+    console.log('🧹 Membersihkan sisa sesi lama...');
     fs.rmSync('./auth_info_baileys', { recursive: true, force: true });
+}
+
+// Hapus juga file QR lama jika ada
+if (fs.existsSync('./qrcode.png')) {
+    fs.unlinkSync('./qrcode.png');
 }
 
 // KONFIGURASI UTAMA ALTRA SHOES & INTEGRASI MEMORI
 const GEMINI_API_KEY = "AQ.Ab8RN6I3w18SXHUYaqRjN6hJQAufTCBTvDJEerztb8sCpWK6Hg"; 
 const SPREADSHEET_ID = "1sRHDSiuHqXGXzqXgFRJrHcrCibDyTE9CpMSzzzzBL70"; 
 const NOMOR_BOS = "6285782575628@s.whatsapp.net"; 
-const NOMOR_HP_PAIRING = "6285782575628"; 
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
@@ -27,7 +31,7 @@ async function startBot() {
     const sock = makeWASocket({
         version,
         auth: state,
-        printQRInTerminal: false,
+        printQRInTerminal: false, // Dimatikan karena kita cetak jadi file gambar
         browser: Browsers.ubuntu('Chrome'),
         logger: pino({ level: 'silent' }),
         connectTimeoutMs: 60000,
@@ -38,29 +42,25 @@ async function startBot() {
 
     sock.ev.on('creds.update', saveCreds);
 
-    // MENGAKTIFKAN PAIRING CODE OTOMATIS (Mencegah error QR terminal yang panjang/terpotong)
-    if (!sock.authState.creds.registered) {
-        setTimeout(async () => {
-            try {
-                let phoneNumber = NOMOR_HP_PAIRING.replace(/[^0-9]/g, '');
-                let code = await sock.requestPairingCode(phoneNumber);
-                console.log('\n\n========================================');
-                console.log(`📱 KODE PAIRING WHATSAPP ANDA: ${code?.match(/.{1,4}/g)?.join('-') || code}`);
-                console.log('========================================\n\n');
-            } catch (err) {
-                console.error('Gagal meminta Pairing Code:', err);
-            }
-        }, 4000);
-    }
-
-    sock.ev.on('connection.update', (update) => {
+    // --- MENYIMPAN QR CODE MENJADI FILE GAMBAR (qrcode.png) ---
+    sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
         
-        // Backup cetak qrcode terminal jika sewaktu-waktu dibutuhkan
         if (qr) {
-            console.log('\n\n--- 📱 QR CODE ALTERNATIF ---');
-            qrcode.generate(qr, { small: true });
-            console.log('------------------------------\n\n');
+            console.log('\n\n--- 📱 MENYIMPAN QR CODE KE DALAM FILE qrcode.png ---');
+            try {
+                // Generate QR code menjadi file PNG di dalam direktori project
+                await QRCode.toFile('./qrcode.png', qr, {
+                    color: {
+                        dark: '#000000',  // Warna titik QR
+                        light: '#ffffff'  // Warna latar belakang
+                    },
+                    width: 400
+                });
+                console.log('✅ File qrcode.png berhasil dibuat! Silakan cek file manager/project Anda.');
+            } catch (err) {
+                console.error('Gagal membuat file QR code:', err);
+            }
         }
 
         if (connection === 'close') {
@@ -80,6 +80,10 @@ async function startBot() {
             }
         } else if (connection === 'open') {
             console.log('🤖 MANTAP BOS! BOT ALTRA SHOES BERHASIL TERHUBUNG KE WHATSAPP!');
+            // Hapus file QR jika sudah berhasil terhubung agar bersih
+            if (fs.existsSync('./qrcode.png')) {
+                fs.unlinkSync('./qrcode.png');
+            }
         }
     });
 
