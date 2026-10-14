@@ -14,19 +14,31 @@ async function startBot() {
     
     const sock = makeWASocket({
         auth: state,
-        printQRInTerminal: true,
+        // printQRInTerminal: true ini kadang suka nge-bug di Railway, 
+        // kita ganti pakai fungsi qrcode-terminal manual yang pasti tembus.
+        printQRInTerminal: false, 
         logger: pino({ level: 'silent' })
     });
 
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect } = update;
+        const { connection, lastDisconnect, qr } = update;
+        
+        // MENCETAK QR CODE KE LAYAR LOG RAILWAY
+        if (qr) {
+            console.log('\n\n--- SILAKAN SCAN QR CODE INI ---');
+            qrcode.generate(qr, { small: true });
+            console.log('--------------------------------\n\n');
+        }
+
         if (connection === 'close') {
             const shouldReconnect = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
             console.log('Koneksi terputus, mencoba menghubungkan kembali...', shouldReconnect);
             if (shouldReconnect) {
                 startBot();
+            } else {
+                console.log('Bot logged out. Silakan hapus folder auth_info_baileys dan mulai ulang.');
             }
         } else if (connection === 'open') {
             console.log('🤖 BOT ALTRA SHOES BERHASIL TERHUBUNG KE WHATSAPP!');
@@ -109,7 +121,7 @@ async function panggilGeminiAQ(userMessage, systemPrompt) {
 }
 
 // FUNGSI MEMBACA GOOGLE SHEET INVENTARIS
-async function cekStokDaruGoogleSheet(query) {
+async function cekStokDariGoogleSheet(query) {
     // Catatan: Google Sheet bisa dibaca lewat Web App Apps Script yang sebelumnya atau API publik sheet
     try {
         // Kita gunakan endpoint publik Google Sheet CSV untuk baca data kilat
