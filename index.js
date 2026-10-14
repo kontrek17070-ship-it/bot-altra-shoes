@@ -1,4 +1,7 @@
+// PAKSA CRYPTO JADI GLOBAL BIAR BAILEYS NGGAK ERROR DI RAILWAY
 const crypto = require('crypto');
+global.crypto = crypto;
+
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
@@ -7,6 +10,7 @@ const axios = require('axios');
 const fs = require('fs');
 
 // --- FITUR SAPU BERSIH SESI LAMA ---
+// Menghapus sesi lama yang corrupt agar QR Code dipaksa keluar
 if (fs.existsSync('./auth_info_baileys')) {
     console.log('🧹 Membersihkan sisa sesi lama yang nyangkut di server Railway...');
     fs.rmSync('./auth_info_baileys', { recursive: true, force: true });
