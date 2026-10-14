@@ -4,8 +4,8 @@ global.crypto = crypto;
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
-const qrcode = require('qrcode-terminal');
 const axios = require('axios');
+const readline = require('readline');
 const fs = require('fs');
 
 if (fs.existsSync('./auth_info_baileys')) {
@@ -17,19 +17,20 @@ const GEMINI_API_KEY = "AQ.Ab8RN6I3w18SXHUYaqRjN6hJQAufTCBTvDJEerztb8sCpWK6Hg";
 const SPREADSHEET_ID = "1sRHDSiuHqXGXzqXgFRJrHcrCibDyTE9CpMSzzzzBL70"; 
 const NOMOR_BOS = "6285782575628@s.whatsapp.net"; 
 
+// NOMOR WHATSAPP BOS PUTRA UNTUK PAIRING CODE (Tanpa tanda +, langsung angka misal: 6285782575628)
+const NOMOR_HP_PAIRING = "6285782575628"; 
+
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
-    
-    // Ambil versi Baileys terbaru biar sinkron dengan protokol WhatsApp
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
         version,
         auth: state,
         printQRInTerminal: false,
-        browser: Browsers.ubuntu('Chrome'), // Ubah agensinya ke Ubuntu Chrome biar lolos filter IP Cloud
+        browser: Browsers.ubuntu('Chrome'),
         logger: pino({ level: 'silent' }),
-        connectTimeoutMs: 60000, // Perpanjang batas waktu tunggu koneksi
+        connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
         keepAliveIntervalMs: 10000,
         retryRequestDelayMs: 5000
@@ -37,15 +38,24 @@ async function startBot() {
 
     sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update;
-        
-        if (qr) {
-            console.log('\n\n--- 📱 SILAKAN SCAN QR CODE INI SEKARANG ---');
-            qrcode.generate(qr, { small: true });
-            console.log('--------------------------------------------\n\n');
-        }
+    // --- FITUR PAIRING CODE OTOMATIS ---
+    if (!sock.authState.creds.registered) {
+        setTimeout(async () => {
+            try {
+                let phoneNumber = NOMOR_HP_PAIRING.replace(/[^0-9]/g, '');
+                let code = await sock.requestPairingCode(phoneNumber);
+                console.log('\n\n========================================');
+                console.log(`📱 KODE PAIRING WHATSAPP ANDA: ${code?.match(/.{1,4}/g)?.join('-') || code}`);
+                console.log('========================================\n\n');
+            } catch (err) {
+                console.error('Gagal meminta Pairing Code:', err);
+            }
+        }, 4000);
+    }
 
+    sock.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect } = update;
+        
         if (connection === 'close') {
             const errorLog = lastDisconnect.error?.message || "Tidak diketahui";
             const statusCode = (lastDisconnect.error instanceof Boom)?.output?.statusCode;
