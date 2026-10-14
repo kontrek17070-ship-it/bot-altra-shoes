@@ -1,23 +1,21 @@
+const crypto = require('crypto');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
 const axios = require('axios');
-const fs = require('fs'); // Tambahan untuk sapu bersih file
+const fs = require('fs');
 
-// --- FITUR SAPU BERSIH (HANYA UNTUK MANCING QR PERTAMA KALI) ---
-// Nanti kalau HP lu udah sukses nge-scan QR, lu harus HAPUS 4 baris ini
-// biar bot-nya nggak minta scan ulang tiap kali server Railway restart!
+// --- FITUR SAPU BERSIH SESI LAMA ---
 if (fs.existsSync('./auth_info_baileys')) {
     console.log('🧹 Membersihkan sisa sesi lama yang nyangkut di server Railway...');
     fs.rmSync('./auth_info_baileys', { recursive: true, force: true });
 }
-// --------------------------------------------------------------
 
 // KONFIGURASI UTAMA ALTRA SHOES
 const GEMINI_API_KEY = "AQ.Ab8RN6I3w18SXHUYaqRjN6hJQAufTCBTvDJEerztb8sCpWK6Hg"; 
 const SPREADSHEET_ID = "1sRHDSiuHqXGXzqXgFRJrHcrCibDyTE9CpMSzzzzBL70"; 
-const NOMOR_BOS = "6285782575628@s.whatsapp.net"; // Format JID WhatsApp Putra
+const NOMOR_BOS = "6285782575628@s.whatsapp.net"; 
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
@@ -48,7 +46,6 @@ async function startBot() {
             
             if (shouldReconnect) {
                 console.log('⏳ Mencoba menghubungkan kembali dalam 5 detik...');
-                // Dikasih REM 5 detik biar server Railway nggak nge-spam log kayak tadi
                 setTimeout(() => {
                     startBot();
                 }, 5000);
@@ -100,7 +97,7 @@ async function startBot() {
     });
 }
 
-// FUNGSI MEMANGGIL GEMINI NATIVE MENGGUNAKAN KUNCI AQ
+// FUNGSI MEMANGGIL GEMINI
 async function panggilGeminiAQ(userMessage, systemPrompt) {
     try {
         let url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -131,7 +128,7 @@ async function panggilGeminiAQ(userMessage, systemPrompt) {
     }
 }
 
-// FUNGSI MEMBACA GOOGLE SHEET INVENTARIS
+// FUNGSI MEMBACA GOOGLE SHEET
 async function cekStokDariGoogleSheet(query) {
     try {
         let csvUrl = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/export?format=csv`;
