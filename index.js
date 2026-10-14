@@ -1,16 +1,14 @@
-// PAKSA CRYPTO JADI GLOBAL BIAR BAILEYS NGGAK ERROR DI RAILWAY
 const crypto = require('crypto');
 global.crypto = crypto;
 
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
 const axios = require('axios');
 const fs = require('fs');
 
-// --- FITUR SAPU BERSIH SESI LAMA ---
-// Menghapus sesi lama yang corrupt agar QR Code dipaksa keluar
+// Sapu bersih sesi lama saat pertama kali deploy agar QR code langsung keluar
 if (fs.existsSync('./auth_info_baileys')) {
     console.log('🧹 Membersihkan sisa sesi lama yang nyangkut di server Railway...');
     fs.rmSync('./auth_info_baileys', { recursive: true, force: true });
@@ -26,7 +24,8 @@ async function startBot() {
     
     const sock = makeWASocket({
         auth: state,
-        printQRInTerminal: false, 
+        printQRInTerminal: false,
+        browser: Browsers.macOS('Desktop'),
         logger: pino({ level: 'silent' })
     });
 
@@ -82,6 +81,7 @@ async function startBot() {
         let cleanBos = NOMOR_BOS.replace('@s.whatsapp.net', '');
         if (cleanBos.startsWith('0')) cleanBos = '62' + cleanBos.substring(1);
 
+        // 1. JAPRI PRIBADI (HANYA UNTUK PUTRA SEBAGAI MENTOR BISNIS & STOK)
         if (!isGroup && cleanSender === cleanBos) {
             if (messageText.toUpperCase().includes("STOK") || messageText.toUpperCase().includes("CEK")) {
                 let infoStok = await cekStokDariGoogleSheet(messageText);
@@ -92,6 +92,7 @@ async function startBot() {
                 await sock.sendMessage(senderJid, { text: aiRespon });
             }
         }
+        // 2. CHAT DI GRUP (ASISTEN OPERASIONAL)
         else if (isGroup && (messageText.toLowerCase().includes("bot") || messageText.includes("6285973984510"))) {
             let cleanMessage = messageText.replace(/@6285973984510/g, "").trim();
             let asistenPrompt = "Kamu adalah asisten operasional Altra Shoes. Jawab dengan ringkas, ramah, dan solutif untuk urusan toko.";
@@ -101,7 +102,7 @@ async function startBot() {
     });
 }
 
-// FUNGSI MEMANGGIL GEMINI
+// FUNGSI MEMANGGIL GEMINI API NATIVE
 async function panggilGeminiAQ(userMessage, systemPrompt) {
     try {
         let url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -132,7 +133,7 @@ async function panggilGeminiAQ(userMessage, systemPrompt) {
     }
 }
 
-// FUNGSI MEMBACA GOOGLE SHEET
+// FUNGSI MEMBACA STOK DARI GOOGLE SHEET
 async function cekStokDariGoogleSheet(query) {
     try {
         let csvUrl = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/export?format=csv`;
