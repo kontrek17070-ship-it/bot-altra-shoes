@@ -3,6 +3,16 @@ const { Boom } = require('@hapi/boom');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
 const axios = require('axios');
+const fs = require('fs'); // Tambahan untuk sapu bersih file
+
+// --- FITUR SAPU BERSIH (HANYA UNTUK MANCING QR PERTAMA KALI) ---
+// Nanti kalau HP lu udah sukses nge-scan QR, lu harus HAPUS 4 baris ini
+// biar bot-nya nggak minta scan ulang tiap kali server Railway restart!
+if (fs.existsSync('./auth_info_baileys')) {
+    console.log('🧹 Membersihkan sisa sesi lama yang nyangkut di server Railway...');
+    fs.rmSync('./auth_info_baileys', { recursive: true, force: true });
+}
+// --------------------------------------------------------------
 
 // KONFIGURASI UTAMA ALTRA SHOES
 const GEMINI_API_KEY = "AQ.Ab8RN6I3w18SXHUYaqRjN6hJQAufTCBTvDJEerztb8sCpWK6Hg"; 
@@ -14,8 +24,6 @@ async function startBot() {
     
     const sock = makeWASocket({
         auth: state,
-        // printQRInTerminal: true ini kadang suka nge-bug di Railway, 
-        // kita ganti pakai fungsi qrcode-terminal manual yang pasti tembus.
         printQRInTerminal: false, 
         logger: pino({ level: 'silent' })
     });
@@ -25,23 +33,30 @@ async function startBot() {
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
         
-        // MENCETAK QR CODE KE LAYAR LOG RAILWAY
         if (qr) {
-            console.log('\n\n--- SILAKAN SCAN QR CODE INI ---');
+            console.log('\n\n--- 📱 SILAKAN SCAN QR CODE INI SEKARANG ---');
             qrcode.generate(qr, { small: true });
-            console.log('--------------------------------\n\n');
+            console.log('--------------------------------------------\n\n');
         }
 
         if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('Koneksi terputus, mencoba menghubungkan kembali...', shouldReconnect);
+            const errorLog = lastDisconnect.error?.message || "Tidak diketahui";
+            const statusCode = (lastDisconnect.error instanceof Boom)?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            
+            console.log(`⚠️ Koneksi terputus! Alasan: ${errorLog}`);
+            
             if (shouldReconnect) {
-                startBot();
+                console.log('⏳ Mencoba menghubungkan kembali dalam 5 detik...');
+                // Dikasih REM 5 detik biar server Railway nggak nge-spam log kayak tadi
+                setTimeout(() => {
+                    startBot();
+                }, 5000);
             } else {
-                console.log('Bot logged out. Silakan hapus folder auth_info_baileys dan mulai ulang.');
+                console.log('❌ Bot logged out. Silakan hapus folder auth_info_baileys dan mulai ulang.');
             }
         } else if (connection === 'open') {
-            console.log('🤖 BOT ALTRA SHOES BERHASIL TERHUBUNG KE WHATSAPP!');
+            console.log('🤖 MANTAP BOS! BOT ALTRA SHOES BERHASIL TERHUBUNG KE WHATSAPP!');
         }
     });
 
@@ -54,7 +69,6 @@ async function startBot() {
         const senderJid = msg.key.remoteJid;
         const isGroup = senderJid.endsWith('@g.us');
         
-        // Ambil teks pesan (bisa dari teks biasa atau extended)
         const messageText = msg.message.conversation || 
                             msg.message.extendedTextMessage?.text || '';
         
@@ -62,8 +76,6 @@ async function startBot() {
 
         console.log(`Pesan masuk dari ${senderJid}: ${messageText}`);
 
-        // 1. JAPRI PRIBADI (HANYA UNTUK PUTRA SEBAGAI MENTOR BISNIS)
-        // Mengecek apakah pengirim adalah Bos Putra (mengabaikan awalan 0 atau 62)
         let cleanSender = senderJid.replace('@s.whatsapp.net', '');
         if (cleanSender.startsWith('0')) cleanSender = '62' + cleanSender.substring(1);
         let cleanBos = NOMOR_BOS.replace('@s.whatsapp.net', '');
@@ -79,7 +91,6 @@ async function startBot() {
                 await sock.sendMessage(senderJid, { text: aiRespon });
             }
         }
-        // 2. CHAT DI GRUP (ASISTEN OPERASIONAL)
         else if (isGroup && (messageText.toLowerCase().includes("bot") || messageText.includes("6285973984510"))) {
             let cleanMessage = messageText.replace(/@6285973984510/g, "").trim();
             let asistenPrompt = "Kamu adalah asisten operasional Altra Shoes. Jawab dengan ringkas, ramah, dan solutif untuk urusan toko.";
@@ -122,9 +133,7 @@ async function panggilGeminiAQ(userMessage, systemPrompt) {
 
 // FUNGSI MEMBACA GOOGLE SHEET INVENTARIS
 async function cekStokDariGoogleSheet(query) {
-    // Catatan: Google Sheet bisa dibaca lewat Web App Apps Script yang sebelumnya atau API publik sheet
     try {
-        // Kita gunakan endpoint publik Google Sheet CSV untuk baca data kilat
         let csvUrl = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/export?format=csv`;
         let res = await axios.get(csvUrl);
         let rows = res.data.split('\n');
