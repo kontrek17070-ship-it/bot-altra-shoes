@@ -4,63 +4,36 @@ global.crypto = crypto;
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
-const QRCode = require('qrcode'); // Library untuk membuat QR code berbentuk file/buffer
+const qrcode = require('qrcode-terminal');
 const axios = require('axios');
-const fs = require('fs');
 
-// Sapu bersih sesi lama yang corrupt
-if (fs.existsSync('./auth_info_baileys')) {
-    console.log('🧹 Membersihkan sisa sesi lama...');
-    fs.rmSync('./auth_info_baileys', { recursive: true, force: true });
-}
-
-// Hapus juga file QR lama jika ada
-if (fs.existsSync('./qrcode.png')) {
-    fs.unlinkSync('./qrcode.png');
-}
-
-// KONFIGURASI UTAMA ALTRA SHOES & INTEGRASI MEMORI
+// KONFIGURASI UTAMA ALTRA SHOES & INTEGRASI MEMORI PENUH
 const GEMINI_API_KEY = "AQ.Ab8RN6I3w18SXHUYaqRjN6hJQAufTCBTvDJEerztb8sCpWK6Hg"; 
 const SPREADSHEET_ID = "1sRHDSiuHqXGXzqXgFRJrHcrCibDyTE9CpMSzzzzBL70"; 
 const NOMOR_BOS = "6285782575628@s.whatsapp.net"; 
 
 async function startBot() {
+    // Menyimpan sesi lokal ke dalam folder 'auth_info_baileys'
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
         version,
         auth: state,
-        printQRInTerminal: false, // Dimatikan karena kita cetak jadi file gambar
-        browser: Browsers.ubuntu('Chrome'),
-        logger: pino({ level: 'silent' }),
-        connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 10000,
-        retryRequestDelayMs: 5000
+        printQRInTerminal: true, // Diaktifkan agar QR muncul sempurna di terminal komputer lu
+        browser: Browsers.macOS('Desktop'),
+        logger: pino({ level: 'silent' })
     });
 
     sock.ev.on('creds.update', saveCreds);
 
-    // --- MENYIMPAN QR CODE MENJADI FILE GAMBAR (qrcode.png) ---
-    sock.ev.on('connection.update', async (update) => {
+    sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
         
         if (qr) {
-            console.log('\n\n--- 📱 MENYIMPAN QR CODE KE DALAM FILE qrcode.png ---');
-            try {
-                // Generate QR code menjadi file PNG di dalam direktori project
-                await QRCode.toFile('./qrcode.png', qr, {
-                    color: {
-                        dark: '#000000',  // Warna titik QR
-                        light: '#ffffff'  // Warna latar belakang
-                    },
-                    width: 400
-                });
-                console.log('✅ File qrcode.png berhasil dibuat! Silakan cek file manager/project Anda.');
-            } catch (err) {
-                console.error('Gagal membuat file QR code:', err);
-            }
+            console.log('\n\n--- 📱 SILAKAN SCAN QR CODE DI BAWAH INI ---');
+            qrcode.generate(qr, { small: true });
+            console.log('--------------------------------------------\n\n');
         }
 
         if (connection === 'close') {
@@ -68,22 +41,16 @@ async function startBot() {
             const statusCode = (lastDisconnect.error instanceof Boom)?.output?.statusCode;
             const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
             
-            console.log(`⚠️ Koneksi terputus! Alasan: ${errorLog} (Status: ${statusCode})`);
+            console.log(`⚠️ Koneksi terputus! Alasan: ${errorLog}`);
             
             if (shouldReconnect) {
-                console.log('⏳ Mencoba menghubungkan kembali dalam 5 detik...');
-                setTimeout(() => {
-                    startBot();
-                }, 5000);
+                console.log('⏳ Menghubungkan kembali...');
+                startBot();
             } else {
-                console.log('❌ Bot logged out. Silakan hapus folder sesi.');
+                console.log('❌ Bot logged out.');
             }
         } else if (connection === 'open') {
             console.log('🤖 MANTAP BOS! BOT ALTRA SHOES BERHASIL TERHUBUNG KE WHATSAPP!');
-            // Hapus file QR jika sudah berhasil terhubung agar bersih
-            if (fs.existsSync('./qrcode.png')) {
-                fs.unlinkSync('./qrcode.png');
-            }
         }
     });
 

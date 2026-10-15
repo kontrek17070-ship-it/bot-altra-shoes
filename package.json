@@ -1,16 +1,16 @@
 {
   "name": "bot-altra-shoes",
   "version": "1.0.0",
-  "description": "WhatsApp Bot Altra Shoes Baileys + Gemini AQ",
+  "description": "Bot WhatsApp Altra Shoes",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
+    "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^6.7.13",
-    "axios": "^1.7.9",
-    "pino": "^9.5.0",
+    "axios": "^1.6.8",
+    "pino": "^8.20.0",
     "qrcode-terminal": "^0.12.0"
-    "qrcode": "^1.5.3"
   }
 }
