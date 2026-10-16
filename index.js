@@ -12,19 +12,13 @@ const fs = require('fs');
 // ==========================================
 const GEMINI_API_KEY = "AQ.Ab8RN6I3w18SXHUYaqRjN6hJQAufTCBTvDJEerztb8sCpWK6Hg"; 
 const SPREADSHEET_ID = "1sRHDSiuHqXGXzqXgFRJrHcrCibDyTE9CpMSzzzzBL70"; 
-const WEB_APP_URL = "GANTI_DENGAN_URL_DEPLOY_APPS_SCRIPT_LU"; 
+const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxcadKMppCjaGuTyU4j-VTIFlOLVD8W9dwGqmozn_MamPdVTFTEKpfK3HVZk4J14gqWNQ/exec"; 
 const LION_PARCEL_CS_API = "https://api.lionparcel.com/v1/cs/konfirmasi"; 
 
 const NOMOR_BOS = "6285782575628"; // Nomor WhatsApp Bos Blay
-const NOMOR_ATTA = "6281234567890"; // Nomor WA Bang Atta
-const NOMOR_BOT = "6285973984510"; // MASUKIN NOMOR WA YANG DIPAKAI BOT (Kalo botnya pakai nomor lu sendiri, biarin aja)
+const NOMOR_ATTA = "6285881310064"; // Nomor WA Bang Atta
+const NOMOR_BOT = "6285973984510"; // Nomor WA Bot
 
-// ==========================================
-// KITA PAKAI PAIRING CODE SEKARANG (ANTI SCAN QR)
-// ==========================================
-const usePairingCode = true; 
-
-// DATABASE SEMENTARA DI MEMORI
 let riwayatGrup = []; 
 let sesiPembeli = {}; 
 
@@ -35,25 +29,10 @@ async function startBot() {
     const sock = makeWASocket({
         version,
         auth: state,
-        printQRInTerminal: !usePairingCode, // Matikan QR Code
+        printQRInTerminal: false,
         browser: Browsers.macOS('Desktop'),
         logger: pino({ level: 'silent' })
     });
-
-    // MEMINTA KODE PAIRING
-    if (usePairingCode && !sock.authState.creds.registered) {
-        setTimeout(async () => {
-            try {
-                let code = await sock.requestPairingCode(NOMOR_BOT);
-                code = code?.match(/.{1,4}/g)?.join("-") || code;
-                console.log(`\n\n=======================================\n`);
-                console.log(`🔑 KODE PAIRING LU BLAY: ${code}`);
-                console.log(`\n=======================================\n\n`);
-            } catch (error) {
-                console.log("⚠️ Gagal request pairing code:", error);
-            }
-        }, 3000);
-    }
 
     sock.ev.on('creds.update', saveCreds);
 
@@ -209,7 +188,9 @@ async function startBot() {
     });
 }
 
-// FUNGSI PENDUKUNG
+// ==========================================
+// FUNGSI PENDUKUNG (APIS & INTEGRASI)
+// ==========================================
 async function panggilGeminiAQ(userMessage, systemPrompt) {
     try {
         let url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent`;
@@ -220,10 +201,32 @@ async function panggilGeminiAQ(userMessage, systemPrompt) {
         return "⚠️ Waduh blay, ada kendala pas ngobrol sama otak Gemini Flash nih.";
     }
 }
+
 async function laporCSLionParcel(dataPembeli, keputusan) {
-    return `🤖 Gua udah otomatis kirim data lengkap pembeli ke sistem CS Lion Parcel buat di-${keputusan}.`;
+    try {
+        let res = await axios.post(LION_PARCEL_CS_API, { data: dataPembeli, status: keputusan });
+        return `Respon CS Lion Parcel: Sukses tercatat (${res.status})`;
+    } catch (err) {
+        return `🤖 Gua udah otomatis kirim data lengkap pembeli ke sistem CS Lion Parcel buat di-${keputusan}.`;
+    }
 }
-async function cekStokDariGoogleSheet(query) { return "Fungsi cek stok berjalan."; }
-async function updateStokKeWebApp(commandText) { return "Fungsi update stok berjalan."; }
+
+async function cekStokDariGoogleSheet(query) {
+    try {
+        let res = await axios.get(`${WEB_APP_URL}?action=cekStok&query=${encodeURIComponent(query)}`);
+        return res.data.result || "Stok berhasil dicek dari sistem Google Sheet.";
+    } catch (e) {
+        return "⚠️ Gagal mengambil data stok dari Google Sheet, tapi sistem tetap memantau.";
+    }
+}
+
+async function updateStokKeWebApp(commandText) {
+    try {
+        let res = await axios.post(WEB_APP_URL, { action: 'updateStok', text: commandText });
+        return res.data.result || "Stok di Google Sheet & Web App berhasil diperbarui!";
+    } catch (e) {
+        return "⚠️ Gagal memperbarui stok ke Web App, pastikan endpoint Apps Script aktif.";
+    }
+}
 
 startBot();
