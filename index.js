@@ -76,7 +76,7 @@ async function startBot() {
         if (cleanBos.startsWith('0')) cleanBos = '62' + cleanBos.substring(1);
 
         // 1. JAPRI PRIBADI (MENTOR BISNIS & CEK STOK UNTUK PUTRA)
-        if (!isGroup && cleanSender.includes("6285782575628")) {
+        if (!isGroup) {
             if (messageText.toUpperCase().includes("STOK") || messageText.toUpperCase().includes("CEK")) {
                 let infoStok = await cekStokDariGoogleSheet(messageText);
                 await sock.sendMessage(senderJid, { text: "📦 " + infoStok });
