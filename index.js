@@ -1,53 +1,83 @@
 const crypto = require('crypto');
 global.crypto = crypto;
 
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion, downloadContentFromMessage } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
 const axios = require('axios');
 const fs = require('fs');
+const path = require('path');
+const zlib = require('zlib'); // Bawaan Node.js untuk dekompresi sesi
 
 // ==========================================
-// KONFIGURASI UTAMA ALTRA SHOES
+// 1. AUTO-RESTORE SESI DARI RAILWAY VARIABLE
 // ==========================================
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "AQ.Ab8RN6I3w18SXHUYaqRjN6hJQAufTCBTvDJEerztb8sCpWK6Hg"; 
-const SPREADSHEET_ID = "1sRHDSiuHqXGXzqXgFRJrHcrCibDyTE9CpMSzzzzBL70"; 
+function restoreSessionFromEnv() {
+    const envSession = process.env.SESSION_BASE64;
+    if (!envSession) return;
+    
+    const authDir = path.join(__dirname, 'auth_info_baileys');
+    if (!fs.existsSync(authDir)) {
+        fs.mkdirSync(authDir, { recursive: true });
+    }
+    
+    try {
+        const buffer = Buffer.from(envSession, 'base64');
+        const decompressed = zlib.gunzipSync(buffer).toString('utf-8');
+        const sessionData = JSON.parse(decompressed);
+        
+        for (const [filename, content] of Object.entries(sessionData)) {
+            fs.writeFileSync(path.join(authDir, filename), content, 'utf-8');
+        }
+        console.log('✅ Sesi berhasil di-restore otomatis dari Railway Variable (Zlib Decompressed)!');
+    } catch (e) {
+        console.error('⚠️ Gagal restore sesi dari ENV:', e.message);
+    }
+}
+
+restoreSessionFromEnv();
+
+// ==========================================
+// 2. KONFIGURASI UTAMA API & NOMOR
+// ==========================================
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY; 
 const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxcadKMppCjaGuTyU4j-VTIFlOLVD8W9dwGqmozn_MamPdVTFTEKpfK3HVZk4J14gqWNQ/exec"; 
 const LION_PARCEL_CS_API = "https://api.lionparcel.com/v1/cs/konfirmasi"; 
 
-const NOMOR_BOS = "6285782575628"; // Nomor WhatsApp Bos Blay
-const NOMOR_ATTA = "6285881310064"; // Nomor WA Bang Atta
-const NOMOR_BOT = "6285973984510"; // Nomor WA Bot
+const NOMOR_BOS = "6285782575628"; // Nomor lu (Blay / Putra)
+const NOMOR_ATTA = "6281234567890"; // Nomor Bang Atta / Kontrex
+const NOMOR_BOT = "6285973984510"; // Nomor Bot WA ini
 
 let riwayatGrup = []; 
 let sesiPembeli = {}; 
 
+// ==========================================
+// 3. FUNGSI PEMANGGIL OTAK GEMINI AI
+// ==========================================
 async function panggilGeminiAQ(userMessage, systemPrompt) {
     try {
         let url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent`;
         let payload = { 
-            "contents": [{ 
-                "role": "user", 
-                "parts": [{"text": systemPrompt + "\n\nPesan: " + userMessage}] 
-            }] 
+            "contents": [{ "role": "user", "parts": [{"text": systemPrompt + "\n\nPesan User: " + userMessage}] }] 
         };
-        // Fiksasi Header Authorization Bearer untuk kunci AQ...
         let response = await axios.post(url, payload, { 
             headers: { 
                 'Content-Type': 'application/json', 
                 'Authorization': `Bearer ${GEMINI_API_KEY}` 
             } 
         });
-        if (response.data && response.data.candidates && response.data.candidates[0].content.parts[0].text) {
+        if (response.data && response.data.candidates) {
             return response.data.candidates[0].content.parts[0].text;
         }
-        return "⚠️ Maaf Blay, format respons AI Gemini tidak valid.";
+        return "⚠️ Maaf Blay, format respons AI Gemini lagi ngaco nih.";
     } catch (error) {
-        console.error("Gemini Error:", error.response?.data || error.message);
-        return "⚠️ Waduh blay, ada kendala pas ngobrol sama otak Gemini Flash nih.";
+        return "⚠️ Waduh blay, ada kendala koneksi pas ngobrol sama otak Gemini Flash.";
     }
 }
 
+// ==========================================
+// 4. KONEKSI BAILEYS & LOGIK WA BOT
+// ==========================================
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
     const { version } = await fetchLatestBaileysVersion();
@@ -56,8 +86,9 @@ async function startBot() {
         version,
         auth: state,
         printQRInTerminal: false,
-        browser: Browsers.macOS('Desktop'),
-        logger: pino({ level: 'silent' })
+        browser: ['Ubuntu', 'Chrome', '20.0.04'],
+        logger: pino({ level: 'silent' }),
+        syncFullHistory: false
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -67,28 +98,27 @@ async function startBot() {
         if (connection === 'close') {
             const statusCode = (lastDisconnect?.error instanceof Boom)?.output?.statusCode;
             console.log('Koneksi terputus, status:', statusCode);
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) {
+            if (statusCode !== DisconnectReason.loggedOut) {
                 setTimeout(() => startBot(), 3000);
             } else {
-                console.log('Perangkat ter-logout dari HP. Silakan scan ulang QR code jika diperlukan.');
+                console.log('Perangkat ter-logout dari HP. Wajib export sesi baru!');
             }
         } else if (connection === 'open') {
             console.log('🤖 MANTAP BLAY! BOT ALTRA SHOES SUPER AUTOPILOT TERHUBUNG!');
         }
     });
 
-    // MENANGKAP PESAN MASUK
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
         const msg = messages[0];
         if (!msg.message || msg.key.fromMe) return;
 
         const senderJid = msg.key.remoteJid;
-        const isGroup = senderJid.endsWith('@g.us');
         const messageText = msg.message.conversation || msg.message.extendedTextMessage?.text || msg.message.imageMessage?.caption || '';
-        const hasMedia = msg.message.imageMessage || msg.message.documentMessage;
         
+        if (!messageText) return;
+
+        const isGroup = senderJid.endsWith('@g.us');
         let cleanSender = msg.key.participant || senderJid;
         cleanSender = cleanSender.replace('@s.whatsapp.net', '').split(':')[0];
         if (cleanSender.startsWith('0')) cleanSender = '62' + cleanSender.substring(1);
@@ -97,157 +127,121 @@ async function startBot() {
         const isAtta = cleanSender.includes(NOMOR_ATTA);
 
         // ==========================================
-        // 1. LOGIC DI GRUP
+        // FITUR A: LOGIKA PERCAKAPAN DI DALAM GRUP
         // ==========================================
         if (isGroup) {
             riwayatGrup.push(`[Dari: ${cleanSender === NOMOR_BOS ? 'Blay' : cleanSender === NOMOR_ATTA ? 'Bang Atta' : 'Tim'}]: ${messageText}`);
             if (riwayatGrup.length > 50) riwayatGrup.shift();
 
-            const botNumber = sock.user?.id ? sock.user.id.split(':')[0] : '6285973984510';
-            const isMentioned = messageText.includes('@' + botNumber) || messageText.toLowerCase().includes('bot');
+            const isMentioned = messageText.includes(`@${NOMOR_BOT}`) || messageText.toLowerCase().includes('bot');
 
-            // FITUR A: BOS MINTA FOLLOW UP PAKET GAGAL DI GRUP
+            // Kasus 1: Bos tag bot untuk follow up resi gagal (Ekstrak Data JSON)
             if (isBos && isMentioned && (messageText.toLowerCase().includes('gagal') || messageText.toLowerCase().includes('follow up'))) {
-                let promptEkstrak = `Ekstrak Data Pembeli dan Nomor Resi dari teks ini. Format balasan HARUS JSON: {"nama": "Berto", "nomor_hp": "628...", "resi": "11LP179..."}. Jika tidak ada, balas {"error": true}. Teks: ${messageText}`;
-                let hasilEkstrak = await panggilGeminiAQ("Ekstrak", promptEkstrak);
+                let promptEkstrak = `Tugas: Ekstrak Data Pembeli & Nomor Resi dari teks pengiriman gagal. Format WAJIB JSON persis seperti ini tanpa tambahan teks lain: {"nama": "Berto", "nomor_hp": "628...", "resi": "11LP179..."}.`;
+                let hasilEkstrak = await panggilGeminiAQ(messageText, promptEkstrak);
                 
                 try {
                     let jsonMatch = hasilEkstrak.match(/\{.*\}/s);
                     if (jsonMatch) {
                         let dataParsed = JSON.parse(jsonMatch[0]);
                         if (dataParsed.nomor_hp && dataParsed.resi) {
-                            let noPembeli = dataParsed.nomor_hp.startsWith('0') ? '62' + dataParsed.nomor_hp.substring(1) : dataParsed.nomor_hp;
-                            noPembeli = noPembeli.replace(/[^0-9]/g, ''); 
+                            let noPembeli = dataParsed.nomor_hp.replace(/[^0-9]/g, ''); 
+                            if (noPembeli.startsWith('0')) noPembeli = '62' + noPembeli.substring(1);
                             
-                            sesiPembeli[noPembeli] = { 
-                                nama: dataParsed.nama || "Kak",
-                                resi: dataParsed.resi, 
-                                status: 'menunggu_keputusan',
-                                grupAsal: senderJid,
-                                dataLengkap: messageText 
-                            };
-
-                            let captionData = messageText;
-                            let bufferImage = null;
-                            if (hasMedia) {
-                                const stream = await downloadContentFromMessage(msg.message.imageMessage || msg.message.documentMessage, 'image');
-                                let buffer = Buffer.from([]);
-                                for await(const chunk of stream) { buffer = Buffer.concat([buffer, chunk]); }
-                                bufferImage = buffer;
-                            }
-
-                            let pesanKePembeli = `Halo ${dataParsed.nama || "Kak"}! 👋 Kami dari *Altra Shoes* (via Lion Parcel).\n\nKami dapat info kalau paket kakak dengan resi *${dataParsed.resi}* gagal dikirim nih kak.\n\nBerikut detail data pengirimannya:\n\n${captionData}\n\nApakah paketnya sudah diterima? Kalau belum, kira-kira paketnya mau kami bantu *Kirim Ulang* (Delivery Kembali) atau di *Retur* (Kembalikan) aja kak? Balas pesan ini ya kak (ketik "KIRIM ULANG" atau "RETUR"). Terima kasih! 🙏`;
+                            sesiPembeli[noPembeli] = { nama: dataParsed.nama || "Kak", resi: dataParsed.resi, grupAsal: senderJid, dataLengkap: messageText };
                             
-                            if (bufferImage) {
-                                await sock.sendMessage(noPembeli + '@s.whatsapp.net', { image: bufferImage, caption: pesanKePembeli });
-                            } else {
-                                await sock.sendMessage(noPembeli + '@s.whatsapp.net', { text: pesanKePembeli });
-                            }
-                            
-                            await sock.sendMessage(senderJid, { text: `✅ Siap Bos! Data pembeli dan resi *${dataParsed.resi}* udah diekstrak dan gue udah konfirmasi japri ke pembelinya. Nanti gue kabarin updatenya di grup ini.` }, { quoted: msg });
-                        } else {
-                            await sock.sendMessage(senderJid, { text: `⚠️ Bos, datanya kurang lengkap. Pastiin ada Nomor HP dan Resinya ya.` }, { quoted: msg });
+                            let pesanKePembeli = `Halo ${dataParsed.nama || "Kak"}! 👋 Kami dari tim logistik *Altra Shoes* (via Lion Parcel).\n\nKami mendapat laporan kalau paket kakak dengan resi *${dataParsed.resi}* gagal terkirim oleh kurir hari ini.\n\nApakah paketnya mungkin sudah kakak terima? Jika belum, apakah kakak mau dibantu *Kirim Ulang* atau di *Retur*? Balas "KIRIM ULANG" atau "RETUR" ya kak. Terima kasih banyak! 🙏`;
+                            await sock.sendMessage(noPembeli + '@s.whatsapp.net', { text: pesanKePembeli });
+                            await sock.sendMessage(senderJid, { text: `✅ Siap Bos! Data berhasil diekstrak dan gue udah konfirmasi via japri ke nomor pembelinya.` }, { quoted: msg });
                         }
                     }
                 } catch (e) {
-                    await sock.sendMessage(senderJid, { text: `⚠️ Error nge-ekstrak data nih Bos.` }, { quoted: msg });
+                    await sock.sendMessage(senderJid, { text: `⚠️ Error nge-ekstrak data nih Bos. Pastiin format teksnya ada nomor HP dan resinya.` }, { quoted: msg });
                 }
             } 
-            // FITUR B: NGOBROL BIASA SAMA BOT DI GRUP
+            // Kasus 2: Tag bot biasa di grup untuk nanya sesuatu
             else if (isMentioned) {
-                let cleanMessage = messageText.replace(new RegExp(`@${botNumber}|bot`, 'gi'), "").trim();
-                let respon = await panggilGeminiAQ(cleanMessage, "Lu asisten gaul Altra Shoes. Jawab singkat padat.");
+                let cleanMessage = messageText.replace(new RegExp(`@${NOMOR_BOT}|bot`, 'gi'), "").trim();
+                let promptGrup = "Lu adalah asisten gaul Altra Shoes. Jawab santai, padat, dan langsung ke intinya aja.";
+                let respon = await panggilGeminiAQ(cleanMessage, promptGrup);
                 await sock.sendMessage(senderJid, { text: `🤖 Yo blay! ${respon}` }, { quoted: msg });
             }
             return;
         }
 
         // ==========================================
-        // 2. LOGIC JAPRI DARI PEMBELI (BALASAN FOLLOW UP)
+        // FITUR B: LOGIKA JAPRI PEMBELI (BALASAN RETUR/RETRY)
         // ==========================================
         if (!isGroup && !isBos && !isAtta && sesiPembeli[cleanSender]) {
-            let resi = sesiPembeli[cleanSender].resi;
-            let grupAsal = sesiPembeli[cleanSender].grupAsal;
-            let dataLengkap = sesiPembeli[cleanSender].dataLengkap;
-
-            let promptPembeli = `Baca pesan pelanggan ini: "${messageText}". Tentukan apakah dia ingin "RETUR" atau "KIRIM ULANG", atau dia bilang paketnya "SUDAH DITERIMA". Balas HANYA dengan kata "RETUR", "KIRIM ULANG", "SUDAH DITERIMA", atau "TIDAK JELAS".`;
-            let keputusan = await panggilGeminiAQ("Tentukan", promptPembeli);
+            let { resi, grupAsal, dataLengkap } = sesiPembeli[cleanSender];
+            
+            let promptKeputusan = `Baca pesan pembeli ini. Tentukan niatnya apakah dia memilih "RETUR", "KIRIM ULANG", "SUDAH DITERIMA", atau "TIDAK JELAS". Balas HANYA dengan SATU KATA keputusan tersebut tanpa tanda baca atau teks tambahan.`;
+            let keputusan = await panggilGeminiAQ(messageText, promptKeputusan);
 
             if (keputusan.includes("SUDAH DITERIMA")) {
-                await sock.sendMessage(senderJid, { text: `Alhamdulillah! Terima kasih banyak kak. Ditunggu next ordernya ya kak! 🙏` });
-                await sock.sendMessage(grupAsal, { text: `✅ *UPDATE PAKET BLAY!*\n\nPembeli dengan resi *${resi}* ngabarin kalau paketnya ternyata *SUDAH DITERIMA*. Aman ya blay!` });
+                await sock.sendMessage(senderJid, { text: `Alhamdulillah kalau begitu! Ditunggu next ordernya ya kak! 🙏` });
+                await sock.sendMessage(grupAsal, { text: `✅ *UPDATE PAKET BLAY!*\n\nPembeli (Resi: ${resi}) konfirmasi paket ternyata *SUDAH DITERIMA*.` });
                 delete sesiPembeli[cleanSender];
-            }
-            else if (keputusan.includes("RETUR") || keputusan.includes("KIRIM ULANG")) {
+            } else if (keputusan.includes("RETUR") || keputusan.includes("KIRIM ULANG")) {
                 let statusFinal = keputusan.includes("RETUR") ? "RETUR" : "KIRIM ULANG";
-                
-                await sock.sendMessage(senderJid, { text: `Baik kak, permintaan *${statusFinal}* untuk resi ${resi} segera kami proses ke sistem Lion Parcel. Terima kasih kak! 🙏` });
-                let responCS = await laporCSLionParcel(dataLengkap, statusFinal);
-                await sock.sendMessage(grupAsal, { text: `✅ *UPDATE PAKET GAGAL BLAY!*\n\nPembeli udah milih: *${statusFinal}* (Resi: ${resi}).\n\n${responCS}\n\nData udah sukses di-handle autopilot blay!` });
-                
+                await sock.sendMessage(senderJid, { text: `Baik kak, permintaan *${statusFinal}* akan segera kami proses ke pihak ekspedisi. Terima kasih! 🙏` });
+                try { await axios.post(LION_PARCEL_CS_API, { data: dataLengkap, status: statusFinal }); } catch (e) {}
+                await sock.sendMessage(grupAsal, { text: `✅ *UPDATE PAKET GAGAL!*\n\nPembeli milih: *${statusFinal}* (Resi: ${resi}). Data otomatis terkirim via sistem ke CS!` });
                 delete sesiPembeli[cleanSender]; 
             } else {
-                await sock.sendMessage(senderJid, { text: `Maaf kak, tolong tegaskan lagi. Apakah paketnya sudah diterima? Jika belum, ketik *RETUR* jika ingin dibatalkan, atau ketik *KIRIM ULANG* jika ingin diantar kembali.` });
+                await sock.sendMessage(senderJid, { text: `Maaf kak, tolong balas dengan kata *RETUR* jika ingin dibatalkan, atau *KIRIM ULANG* jika ingin diantar kembali.` });
             }
             return;
         }
 
         // ==========================================
-        // 3. LOGIC JAPRI KHUSUS BOS (BLAY)
+        // FITUR C: LOGIKA JAPRI BOS (PUTRA/BLAY)
         // ==========================================
         if (!isGroup && isBos) {
             const upperText = messageText.toUpperCase();
-
+            
+            // Perintah 1: Analisis Grup
             if (upperText.includes("ANALISIS GRUP") || upperText.includes("SARAN BISNIS")) {
-                let promptAnalisis = `Kamu mentor bisnis cerdas. Analisis riwayat chat grup tim Altra Shoes ini. Temukan jika ada problem/masalah (selisih, komplain, dll) dan berikan saran menyeluruh, visioner, dan taktis. Riwayat: ${riwayatGrup.join(" | ")}`;
-                let responAnalisis = await panggilGeminiAQ("Analisis sekarang", promptAnalisis);
-                await sock.sendMessage(senderJid, { text: `📊 *HASIL ANALISIS GRUP & SARAN BISNIS:*\n\n${responAnalisis}` });
-            }
-            else if (upperText.includes("STOK") || upperText.includes("CEK STOK")) {
-                let infoStok = await cekStokDariGoogleSheet(messageText);
-                await sock.sendMessage(senderJid, { text: `📦 ${infoStok}` });
+                let promptAnalisis = `Kamu adalah mentor bisnis top. Analisis riwayat chat grup operasional ini: ${riwayatGrup.join(" | ")}. Berikan ringkasan apa yang terjadi dan saran perbaikan operasional.`;
+                let responAnalisis = await panggilGeminiAQ("Analisis", promptAnalisis);
+                await sock.sendMessage(senderJid, { text: `📊 *HASIL ANALISIS GRUP:*\n\n${responAnalisis}` });
             } 
-            else if (upperText.includes("UPDATE STOK") || upperText.includes("POTONG STOK") || upperText.includes("SOLD")) {
-                let hasilUpdate = await updateStokKeWebApp(messageText);
-                await sock.sendMessage(senderJid, { text: `🔄 ${hasilUpdate}` });
-            }
+            // Perintah 2: Cek Stok via Apps Script (Google Sheets)
+            else if (upperText.includes("CEK STOK") || upperText.includes("STOK")) {
+                try {
+                    let res = await axios.get(`${WEB_APP_URL}?action=cekStok&query=${encodeURIComponent(messageText)}`);
+                    await sock.sendMessage(senderJid, { text: `📦 ${res.data.result || "Stok berhasil dicek langsung dari Google Sheets."}` });
+                } catch (e) {
+                    await sock.sendMessage(senderJid, { text: "⚠️ Sistem Sheet sedang lambat atau error, blay." });
+                }
+            } 
+            // Perintah 3: Update Stok via Apps Script (Google Sheets)
+            else if (upperText.includes("UPDATE STOK") || upperText.includes("SOLD")) {
+                try {
+                    let res = await axios.post(WEB_APP_URL, { action: 'updateStok', text: messageText });
+                    await sock.sendMessage(senderJid, { text: `🔄 ${res.data.result || "Stok di Google Sheet & Web App berhasil diperbarui!"}` });
+                } catch (e) {
+                    await sock.sendMessage(senderJid, { text: "⚠️ Gagal mengirim data update ke Google Sheets." });
+                }
+            } 
+            // Ngobrol Bebas sebagai Mentor Bisnis Personal
             else {
-                let mentorPrompt = `Kamu mentor bisnis AI tingkat atas untuk Blay (Putra). Panggil dia "blay", gunakan bahasa gaul, akrab. Blay punya Altra Shoes, agen Lion Parcel, pegang JNE Erajaya. Niatnya sukses untuk sedekah & bantu orang. Beri saran bisnis/keuangan, dan selalu ingatkan tentang manajemen cashflow serta notice sedekah (tiap gajian/2 minggu) agar berkah.`;
-                let aiRespon = await panggilGeminiAQ(messageText, mentorPrompt);
+                let promptMentorPersonal = `Kamu adalah mentor bisnis AI tingkat atas untuk Putra, tapi kamu memanggilnya "Blay". Gunakan bahasa gaul, akrab, dan maskulin. 
+                
+                Konteks Profil Blay:
+                - Dia berdomisili di Tangerang.
+                - Owner toko sepatu kasual "Altra Shoes".
+                - Pemilik agen pengiriman "Lion Parcel".
+                - Bekerja pegang project delivery untuk JNE Express khusus Erajaya Group.
+                - Punya partner / pacar yang sangat support bernama Alika.
+                
+                Instruksi Sikap: Beri saran bisnis/keuangan yang tajam. Selalu ingatkan tentang pentingnya manajemen cashflow yang rapi, menjaga hubungan baik dengan Alika, dan notice rutin soal sedekah (terutama tiap gajian atau per 2 minggu) agar rezeki bisnisnya selalu berkah.`;
+                
+                let aiRespon = await panggilGeminiAQ(messageText, promptMentorPersonal);
                 await sock.sendMessage(senderJid, { text: aiRespon });
             }
         }
     });
-}
-
-// ==========================================
-// FUNGSI PENDUKUNG (APIS & INTEGRASI)
-// ==========================================
-async function laporCSLionParcel(dataPembeli, keputusan) {
-    try {
-        let res = await axios.post(LION_PARCEL_CS_API, { data: dataPembeli, status: keputusan });
-        return `Respon CS Lion Parcel: Sukses tercatat (${res.status})`;
-    } catch (err) {
-        return `🤖 Gua udah otomatis kirim data lengkap pembeli ke sistem CS Lion Parcel buat di-${keputusan}.`;
-    }
-}
-
-async function cekStokDariGoogleSheet(query) {
-    try {
-        let res = await axios.get(`${WEB_APP_URL}?action=cekStok&query=${encodeURIComponent(query)}`);
-        return res.data.result || "Stok berhasil dicek dari sistem Google Sheet.";
-    } catch (e) {
-        return "⚠️ Gagal mengambil data stok dari Google Sheet, tapi sistem tetap memantau.";
-    }
-}
-
-async function updateStokKeWebApp(commandText) {
-    try {
-        let res = await axios.post(WEB_APP_URL, { action: 'updateStok', text: commandText });
-        return res.data.result || "Stok di Google Sheet & Web App berhasil diperbarui!";
-    } catch (e) {
-        return "⚠️ Gagal memperbarui stok ke Web App, pastikan endpoint Apps Script aktif.";
-    }
 }
 
 startBot();
