@@ -129,7 +129,8 @@ async function startBot() {
 
         if (!messageText) return;
 
-        const isGroup = senderJid.endsWith('@g.us');
+// IDENTIFIKASI BOS AMAN (MENDUKUNG NOMOR ASLI & NOMOR LID HIDDEN WA)
+        const isBos = cleanSender.endsWith('5628') || cleanSender.includes(NOMOR_BOS) || cleanSender.includes('207923829592283');
         
         // IDENTIFIKASI BOS AMAN (MENDUKUNG AKHIRAN 5628)
         const isBos = cleanSender.endsWith('5628') || cleanSender.includes(NOMOR_BOS);
