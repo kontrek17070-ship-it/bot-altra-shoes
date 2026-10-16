@@ -103,8 +103,13 @@ async function startBot() {
             } else {
                 console.log('Perangkat ter-logout dari HP. Wajib export sesi baru!');
             }
-        } else if (connection === 'open') {
+       } else if (connection === 'open') {
             console.log('🤖 MANTAP BLAY! BOT ALTRA SHOES SUPER AUTOPILOT TERHUBUNG!');
+            
+            // PANCINGAN RESET ENKRIPSI: Bot bakal nge-chat lu duluan tiap kali online
+            sock.sendMessage(NOMOR_BOS + '@s.whatsapp.net', { 
+                text: '🔄 [SYSTEM PING] Otak Gemini Flash udah sinkron sama enkripsi baru, Blay! Coba balas pesan ini.' 
+            });
         }
     });
 
