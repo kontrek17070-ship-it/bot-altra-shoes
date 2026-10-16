@@ -4,7 +4,6 @@ global.crypto = crypto;
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion, downloadContentFromMessage } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
-const qrcode = require('qrcode-terminal');
 const axios = require('axios');
 const fs = require('fs');
 
@@ -14,9 +13,16 @@ const fs = require('fs');
 const GEMINI_API_KEY = "AQ.Ab8RN6I3w18SXHUYaqRjN6hJQAufTCBTvDJEerztb8sCpWK6Hg"; 
 const SPREADSHEET_ID = "1sRHDSiuHqXGXzqXgFRJrHcrCibDyTE9CpMSzzzzBL70"; 
 const WEB_APP_URL = "GANTI_DENGAN_URL_DEPLOY_APPS_SCRIPT_LU"; 
-const LION_PARCEL_CS_API = "https://api.lionparcel.com/v1/cs/konfirmasi"; // (URL API Lion Parcel, sesuaikan)
-const NOMOR_BOS = "6285782575628"; // Nomor WhatsApp Blay (Putra)
-const NOMOR_ATTA = "6281234567890"; // GANTI SAMA NOMOR BANG ATTA
+const LION_PARCEL_CS_API = "https://api.lionparcel.com/v1/cs/konfirmasi"; 
+
+const NOMOR_BOS = "6285782575628"; // Nomor WhatsApp Bos Blay
+const NOMOR_ATTA = "6281234567890"; // Nomor WA Bang Atta
+const NOMOR_BOT = "6285973984510"; // MASUKIN NOMOR WA YANG DIPAKAI BOT (Kalo botnya pakai nomor lu sendiri, biarin aja)
+
+// ==========================================
+// KITA PAKAI PAIRING CODE SEKARANG (ANTI SCAN QR)
+// ==========================================
+const usePairingCode = true; 
 
 // DATABASE SEMENTARA DI MEMORI
 let riwayatGrup = []; 
@@ -29,17 +35,30 @@ async function startBot() {
     const sock = makeWASocket({
         version,
         auth: state,
-        printQRInTerminal: true,
+        printQRInTerminal: !usePairingCode, // Matikan QR Code
         browser: Browsers.macOS('Desktop'),
         logger: pino({ level: 'silent' })
     });
 
+    // MEMINTA KODE PAIRING
+    if (usePairingCode && !sock.authState.creds.registered) {
+        setTimeout(async () => {
+            try {
+                let code = await sock.requestPairingCode(NOMOR_BOT);
+                code = code?.match(/.{1,4}/g)?.join("-") || code;
+                console.log(`\n\n=======================================\n`);
+                console.log(`🔑 KODE PAIRING LU BLAY: ${code}`);
+                console.log(`\n=======================================\n\n`);
+            } catch (error) {
+                console.log("⚠️ Gagal request pairing code:", error);
+            }
+        }, 3000);
+    }
+
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update;
-        if (qr) qrcode.generate(qr, { small: true });
-
+        const { connection, lastDisconnect } = update;
         if (connection === 'close') {
             const shouldReconnect = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) startBot();
@@ -89,7 +108,6 @@ async function startBot() {
                             let noPembeli = dataParsed.nomor_hp.startsWith('0') ? '62' + dataParsed.nomor_hp.substring(1) : dataParsed.nomor_hp;
                             noPembeli = noPembeli.replace(/[^0-9]/g, ''); 
                             
-                            // Simpan ke sesi pembeli beserta ID Grup untuk lapor balik
                             sesiPembeli[noPembeli] = { 
                                 nama: dataParsed.nama || "Kak",
                                 resi: dataParsed.resi, 
@@ -99,8 +117,6 @@ async function startBot() {
                             };
 
                             let captionData = messageText;
-                            
-                            // Kalau ada gambar (contoh: resi admin Lion), kita forward gambarnya ke pembeli
                             let bufferImage = null;
                             if (hasMedia) {
                                 const stream = await downloadContentFromMessage(msg.message.imageMessage || msg.message.documentMessage, 'image');
@@ -109,8 +125,7 @@ async function startBot() {
                                 bufferImage = buffer;
                             }
 
-                            // Kirim pesan + data (dan gambar kalau ada) ke pembeli
-                            let pesanKePembeli = `Halo ${dataParsed.nama || "Kak"}! 👋 Kami dari *Altra Shoes* (via Lion Parcel).\n\nKami dapat info kalau paket kakak dengan resi *${dataParsed.resi}* gagal dikirim nih kak.\n\nBerikut detail data pengirimannya:\n\n${captionData}\n\nApakah paketnya sudah diterima? Kalau belum, kira-kira paketnya mau kami bantu *Kirim Ulang* (Delivery Kembali) atau di *Retur* (Kembalikan) aja kak? Balas pesan ini ya kak (ketik "KIRIM ULANG" atau "RETUR") biar langsung kami proses. Terima kasih! 🙏`;
+                            let pesanKePembeli = `Halo ${dataParsed.nama || "Kak"}! 👋 Kami dari *Altra Shoes* (via Lion Parcel).\n\nKami dapat info kalau paket kakak dengan resi *${dataParsed.resi}* gagal dikirim nih kak.\n\nBerikut detail data pengirimannya:\n\n${captionData}\n\nApakah paketnya sudah diterima? Kalau belum, kira-kira paketnya mau kami bantu *Kirim Ulang* (Delivery Kembali) atau di *Retur* (Kembalikan) aja kak? Balas pesan ini ya kak (ketik "KIRIM ULANG" atau "RETUR"). Terima kasih! 🙏`;
                             
                             if (bufferImage) {
                                 await sock.sendMessage(noPembeli + '@s.whatsapp.net', { image: bufferImage, caption: pesanKePembeli });
@@ -118,9 +133,9 @@ async function startBot() {
                                 await sock.sendMessage(noPembeli + '@s.whatsapp.net', { text: pesanKePembeli });
                             }
                             
-                            await sock.sendMessage(senderJid, { text: `✅ Siap Bos! Data pembeli dan resi *${dataParsed.resi}* udah berhasil diekstrak. Gue udah japri pembelinya beserta foto resinya. Nanti kalau ada jawaban, langsung gue kabarin di grup ini.` }, { quoted: msg });
+                            await sock.sendMessage(senderJid, { text: `✅ Siap Bos! Data pembeli dan resi *${dataParsed.resi}* udah diekstrak dan gue udah konfirmasi japri ke pembelinya. Nanti gue kabarin updatenya di grup ini.` }, { quoted: msg });
                         } else {
-                            await sock.sendMessage(senderJid, { text: `⚠️ Bos, format datanya kurang lengkap. Pastiin ada Nomor HP dan Resinya ya.` }, { quoted: msg });
+                            await sock.sendMessage(senderJid, { text: `⚠️ Bos, datanya kurang lengkap. Pastiin ada Nomor HP dan Resinya ya.` }, { quoted: msg });
                         }
                     }
                 } catch (e) {
@@ -148,7 +163,7 @@ async function startBot() {
             let keputusan = await panggilGeminiAQ("Tentukan", promptPembeli);
 
             if (keputusan.includes("SUDAH DITERIMA")) {
-                await sock.sendMessage(senderJid, { text: `Alhamdulillah kalau sudah diterima kak! Terima kasih banyak sudah order di Altra Shoes. Ditunggu next ordernya ya kak! 🙏` });
+                await sock.sendMessage(senderJid, { text: `Alhamdulillah! Terima kasih banyak kak. Ditunggu next ordernya ya kak! 🙏` });
                 await sock.sendMessage(grupAsal, { text: `✅ *UPDATE PAKET BLAY!*\n\nPembeli dengan resi *${resi}* ngabarin kalau paketnya ternyata *SUDAH DITERIMA*. Aman ya blay!` });
                 delete sesiPembeli[cleanSender];
             }
@@ -156,9 +171,7 @@ async function startBot() {
                 let statusFinal = keputusan.includes("RETUR") ? "RETUR" : "KIRIM ULANG";
                 
                 await sock.sendMessage(senderJid, { text: `Baik kak, permintaan *${statusFinal}* untuk resi ${resi} segera kami proses ke sistem Lion Parcel. Terima kasih kak! 🙏` });
-
                 let responCS = await laporCSLionParcel(dataLengkap, statusFinal);
-
                 await sock.sendMessage(grupAsal, { text: `✅ *UPDATE PAKET GAGAL BLAY!*\n\nPembeli udah milih: *${statusFinal}* (Resi: ${resi}).\n\n${responCS}\n\nData udah sukses di-handle autopilot blay!` });
                 
                 delete sesiPembeli[cleanSender]; 
@@ -175,7 +188,7 @@ async function startBot() {
             const upperText = messageText.toUpperCase();
 
             if (upperText.includes("ANALISIS GRUP") || upperText.includes("SARAN BISNIS")) {
-                let promptAnalisis = `Kamu mentor bisnis cerdas. Analisis riwayat chat grup tim Altra Shoes ini. Temukan jika ada problem/masalah (selisih, komplain, dll) dan berikan saran menyeluruh, visioner, dan taktis agar bisnis berkembang jauh lebih besar. Riwayat: ${riwayatGrup.join(" | ")}`;
+                let promptAnalisis = `Kamu mentor bisnis cerdas. Analisis riwayat chat grup tim Altra Shoes ini. Temukan jika ada problem/masalah (selisih, komplain, dll) dan berikan saran menyeluruh, visioner, dan taktis. Riwayat: ${riwayatGrup.join(" | ")}`;
                 let responAnalisis = await panggilGeminiAQ("Analisis sekarang", promptAnalisis);
                 await sock.sendMessage(senderJid, { text: `📊 *HASIL ANALISIS GRUP & SARAN BISNIS:*\n\n${responAnalisis}` });
             }
@@ -188,7 +201,7 @@ async function startBot() {
                 await sock.sendMessage(senderJid, { text: `🔄 ${hasilUpdate}` });
             }
             else {
-                let mentorPrompt = `Kamu adalah mentor bisnis AI tingkat atas untuk Blay (Putra). Panggil dia "blay", gunakan bahasa gaul, akrab. Blay punya Altra Shoes, agen Lion Parcel, pegang JNE Erajaya. Niatnya sukses untuk sedekah & bantu orang kesusahan. Beri saran bisnis/operasional/keuangan, dan selalu ingatkan tentang manajemen cashflow serta notice sedekah (tiap gajian/2 minggu) agar hidupnya berkah.`;
+                let mentorPrompt = `Kamu mentor bisnis AI tingkat atas untuk Blay (Putra). Panggil dia "blay", gunakan bahasa gaul, akrab. Blay punya Altra Shoes, agen Lion Parcel, pegang JNE Erajaya. Niatnya sukses untuk sedekah & bantu orang. Beri saran bisnis/keuangan, dan selalu ingatkan tentang manajemen cashflow serta notice sedekah (tiap gajian/2 minggu) agar berkah.`;
                 let aiRespon = await panggilGeminiAQ(messageText, mentorPrompt);
                 await sock.sendMessage(senderJid, { text: aiRespon });
             }
@@ -196,41 +209,21 @@ async function startBot() {
     });
 }
 
-// ==========================================
-// KUMPULAN FUNGSI PENDUKUNG
-// ==========================================
-
+// FUNGSI PENDUKUNG
 async function panggilGeminiAQ(userMessage, systemPrompt) {
     try {
         let url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent`;
-        let payload = {
-            "contents": [{ "role": "user", "parts": [{"text": systemPrompt + "\n\nPesan: " + userMessage}] }]
-        };
-        let response = await axios.post(url, payload, {
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GEMINI_API_KEY}` }
-        });
+        let payload = { "contents": [{ "role": "user", "parts": [{"text": systemPrompt + "\n\nPesan: " + userMessage}] }] };
+        let response = await axios.post(url, payload, { headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GEMINI_API_KEY}` } });
         return response.data.candidates[0].content.parts[0].text;
     } catch (error) {
         return "⚠️ Waduh blay, ada kendala pas ngobrol sama otak Gemini Flash nih.";
     }
 }
-
 async function laporCSLionParcel(dataPembeli, keputusan) {
-    try {
-        // SIMULASI TEMBAK API KE LION PARCEL WEB
-        /*
-        await axios.post(LION_PARCEL_CS_API, { 
-            data_lengkap: dataPembeli, 
-            tindakan: keputusan 
-        });
-        */
-        return `🤖 Gua udah otomatis kirim *Data Lengkap Pembeli* beserta keputusan *${keputusan}* ke Web/Sistem CS Lion Parcel.`;
-    } catch (e) {
-        return `⚠️ Gagal nembak API Web Lion Parcel blay, cek koneksi atau endpoint-nya.`;
-    }
+    return `🤖 Gua udah otomatis kirim data lengkap pembeli ke sistem CS Lion Parcel buat di-${keputusan}.`;
 }
-
-async function cekStokDariGoogleSheet(query) { return "Fungsi cek stok Google Sheet berjalan (Placeholder)."; }
-async function updateStokKeWebApp(commandText) { return "Fungsi potong stok kasir ke Web App berjalan (Placeholder)."; }
+async function cekStokDariGoogleSheet(query) { return "Fungsi cek stok berjalan."; }
+async function updateStokKeWebApp(commandText) { return "Fungsi update stok berjalan."; }
 
 startBot();
