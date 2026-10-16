@@ -44,9 +44,9 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxcadKMppCjaGuTyU4j-VTIFlOLVD8W9dwGqmozn_MamPdVTFTEKpfK3HVZk4J14gqWNQ/exec"; 
 const LION_PARCEL_CS_API = "https://api.lionparcel.com/v1/cs/konfirmasi"; 
 
-const NOMOR_BOS = "6285782575628"; // Nomor lu (Blay / Putra)
+const NOMOR_BOS = "6285782575628"; // Nomor lu (Blay / Putra - Berakhir 5628)
 const NOMOR_ATTA = "6281234567890"; // Nomor Bang Atta / Kontrex
-const NOMOR_BOT = "6285973984510"; // Nomor Bot WA ini
+const NOMOR_BOT = "6285973984510"; // Nomor Bot WA Altra Shoes
 
 let riwayatGrup = []; 
 let sesiPembeli = {}; 
@@ -116,28 +116,32 @@ async function startBot() {
         const senderJid = msg.key.remoteJid;
         const messageText = msg.message.conversation || msg.message.extendedTextMessage?.text || msg.message.imageMessage?.caption || '';
         
-        if (!messageText) return;
-
-        const isGroup = senderJid.endsWith('@g.us');
         let cleanSender = msg.key.participant || senderJid;
         cleanSender = cleanSender.replace('@s.whatsapp.net', '').split(':')[0];
         if (cleanSender.startsWith('0')) cleanSender = '62' + cleanSender.substring(1);
 
-        const isBos = cleanSender.includes(NOMOR_BOS);
+        console.log(`📥 [LOG MASUK] Dari: ${cleanSender} | Pesan: ${messageText}`);
+
+        if (!messageText) return;
+
+        const isGroup = senderJid.endsWith('@g.us');
+        
+        // IDENTIFIKASI BOS AMAN (MENDUKUNG AKHIRAN 5628)
+        const isBos = cleanSender.endsWith('5628') || cleanSender.includes(NOMOR_BOS);
         const isAtta = cleanSender.includes(NOMOR_ATTA);
 
         // ==========================================
         // FITUR A: LOGIKA PERCAKAPAN DI DALAM GRUP
         // ==========================================
         if (isGroup) {
-            riwayatGrup.push(`[Dari: ${cleanSender === NOMOR_BOS ? 'Blay' : cleanSender === NOMOR_ATTA ? 'Bang Atta' : 'Tim'}]: ${messageText}`);
+            riwayatGrup.push(`[Dari: ${isBos ? 'Blay' : isAtta ? 'Bang Atta' : 'Tim'}]: ${messageText}`);
             if (riwayatGrup.length > 50) riwayatGrup.shift();
 
             const isMentioned = messageText.includes(`@${NOMOR_BOT}`) || messageText.toLowerCase().includes('bot');
 
             // Kasus 1: Bos tag bot untuk follow up resi gagal (Ekstrak Data JSON)
             if (isBos && isMentioned && (messageText.toLowerCase().includes('gagal') || messageText.toLowerCase().includes('follow up'))) {
-                let promptEkstrak = `Tugas: Ekstrak Data Pembeli & Nomor Resi dari teks pengiriman gagal. Format WAJIB JSON persis seperti ini tanpa tambahan teks lain: {"nama": "Berto", "nomor_hp": "628...", "resi": "11LP179..."}.`;
+                let promptEkstrak = `Tugas: Ekstrak Data Pembeli & Nomor Resi dari teks pengiriman gagal. Format WAJIB JSON persis seperti ini tanpa tambahan teks lain: {"nama": "Berto", "nomor_hp": "628...", "resi": "11LP179..."}. Teks: ${messageText}`;
                 let hasilEkstrak = await panggilGeminiAQ(messageText, promptEkstrak);
                 
                 try {
@@ -159,7 +163,7 @@ async function startBot() {
                     await sock.sendMessage(senderJid, { text: `⚠️ Error nge-ekstrak data nih Bos. Pastiin format teksnya ada nomor HP dan resinya.` }, { quoted: msg });
                 }
             } 
-            // Kasus 2: Tag bot biasa di grup untuk nanya sesuatu
+            // Kasus 2: Tag bot biasa di grup
             else if (isMentioned) {
                 let cleanMessage = messageText.replace(new RegExp(`@${NOMOR_BOT}|bot`, 'gi'), "").trim();
                 let promptGrup = "Lu adalah asisten gaul Altra Shoes. Jawab santai, padat, dan langsung ke intinya aja.";
@@ -175,7 +179,7 @@ async function startBot() {
         if (!isGroup && !isBos && !isAtta && sesiPembeli[cleanSender]) {
             let { resi, grupAsal, dataLengkap } = sesiPembeli[cleanSender];
             
-            let promptKeputusan = `Baca pesan pembeli ini. Tentukan niatnya apakah dia memilih "RETUR", "KIRIM ULANG", "SUDAH DITERIMA", atau "TIDAK JELAS". Balas HANYA dengan SATU KATA keputusan tersebut tanpa tanda baca atau teks tambahan.`;
+            let promptKeputusan = `Baca pesan pembeli ini. Tentukan niatnya apakah dia memilih "RETUR", "KIRIM ULANG", "SUDAH DITERIMA", atau "TIDAK JELAS". Balas HANYA dengan SATU KATA keputusan tersebut tanpa tanda baca atau teks tambahan. Teks: ${messageText}`;
             let keputusan = await panggilGeminiAQ(messageText, promptKeputusan);
 
             if (keputusan.includes("SUDAH DITERIMA")) {
