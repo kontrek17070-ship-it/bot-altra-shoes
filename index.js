@@ -10,7 +10,7 @@ const fs = require('fs');
 // ==========================================
 // KONFIGURASI UTAMA ALTRA SHOES
 // ==========================================
-const GEMINI_API_KEY = "AQ.Ab8RN6I3w18SXHUYaqRjN6hJQAufTCBTvDJEerztb8sCpWK6Hg"; 
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "AQ.Ab8RN6I3w18SXHUYaqRjN6hJQAufTCBTvDJEerztb8sCpWK6Hg"; 
 const SPREADSHEET_ID = "1sRHDSiuHqXGXzqXgFRJrHcrCibDyTE9CpMSzzzzBL70"; 
 const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxcadKMppCjaGuTyU4j-VTIFlOLVD8W9dwGqmozn_MamPdVTFTEKpfK3HVZk4J14gqWNQ/exec"; 
 const LION_PARCEL_CS_API = "https://api.lionparcel.com/v1/cs/konfirmasi"; 
@@ -21,6 +21,32 @@ const NOMOR_BOT = "6285973984510"; // Nomor WA Bot
 
 let riwayatGrup = []; 
 let sesiPembeli = {}; 
+
+async function panggilGeminiAQ(userMessage, systemPrompt) {
+    try {
+        let url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent`;
+        let payload = { 
+            "contents": [{ 
+                "role": "user", 
+                "parts": [{"text": systemPrompt + "\n\nPesan: " + userMessage}] 
+            }] 
+        };
+        // Fiksasi Header Authorization Bearer untuk kunci AQ...
+        let response = await axios.post(url, payload, { 
+            headers: { 
+                'Content-Type': 'application/json', 
+                'Authorization': `Bearer ${GEMINI_API_KEY}` 
+            } 
+        });
+        if (response.data && response.data.candidates && response.data.candidates[0].content.parts[0].text) {
+            return response.data.candidates[0].content.parts[0].text;
+        }
+        return "⚠️ Maaf Blay, format respons AI Gemini tidak valid.";
+    } catch (error) {
+        console.error("Gemini Error:", error.response?.data || error.message);
+        return "⚠️ Waduh blay, ada kendala pas ngobrol sama otak Gemini Flash nih.";
+    }
+}
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
@@ -39,8 +65,14 @@ async function startBot() {
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) startBot();
+            const statusCode = (lastDisconnect?.error instanceof Boom)?.output?.statusCode;
+            console.log('Koneksi terputus, status:', statusCode);
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            if (shouldReconnect) {
+                setTimeout(() => startBot(), 3000);
+            } else {
+                console.log('Perangkat ter-logout dari HP. Silakan scan ulang QR code jika diperlukan.');
+            }
         } else if (connection === 'open') {
             console.log('🤖 MANTAP BLAY! BOT ALTRA SHOES SUPER AUTOPILOT TERHUBUNG!');
         }
@@ -71,7 +103,7 @@ async function startBot() {
             riwayatGrup.push(`[Dari: ${cleanSender === NOMOR_BOS ? 'Blay' : cleanSender === NOMOR_ATTA ? 'Bang Atta' : 'Tim'}]: ${messageText}`);
             if (riwayatGrup.length > 50) riwayatGrup.shift();
 
-            const botNumber = sock.user?.id ? sock.user.id.split(':')[0] : '';
+            const botNumber = sock.user?.id ? sock.user.id.split(':')[0] : '6285973984510';
             const isMentioned = messageText.includes('@' + botNumber) || messageText.toLowerCase().includes('bot');
 
             // FITUR A: BOS MINTA FOLLOW UP PAKET GAGAL DI GRUP
@@ -191,17 +223,6 @@ async function startBot() {
 // ==========================================
 // FUNGSI PENDUKUNG (APIS & INTEGRASI)
 // ==========================================
-async function panggilGeminiAQ(userMessage, systemPrompt) {
-    try {
-        let url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent`;
-        let payload = { "contents": [{ "role": "user", "parts": [{"text": systemPrompt + "\n\nPesan: " + userMessage}] }] };
-        let response = await axios.post(url, payload, { headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GEMINI_API_KEY}` } });
-        return response.data.candidates[0].content.parts[0].text;
-    } catch (error) {
-        return "⚠️ Waduh blay, ada kendala pas ngobrol sama otak Gemini Flash nih.";
-    }
-}
-
 async function laporCSLionParcel(dataPembeli, keputusan) {
     try {
         let res = await axios.post(LION_PARCEL_CS_API, { data: dataPembeli, status: keputusan });
